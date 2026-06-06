@@ -1,0 +1,51 @@
+# DATA & IMAGES (DO NOT COMMIT)
+data/raw/**/*.jpg
+data/raw/**/*.JPG
+data/raw/**/*.png
+data/raw/**/*.jpeg
+data/processed/
+!data/.gitkeep
+
+# MODEL CHECKPOINTS & WEIGHTS (LARGE FILES)
+models/**/*.pth
+models/**/*.pt
+models/
+!models/.gitkeep
+
+# RESULTS & OUTPUTS
+results/
+!results/.gitkeep
+
+# PYTHON
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# JUPYTER
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# ENV VARS & SECRETS
+.env
+.env.local
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NODE (for Next.js frontend later)
+node_modules/
+.next/
+npm-debug.log
