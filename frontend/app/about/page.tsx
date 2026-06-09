@@ -312,50 +312,6 @@ export default function AboutPage() {
           </div>
         </section>
 
-        {/* ── Author ────────────────────────────────────────────────────── */}
-        <section style={{ marginBottom: "64px" }}>
-          <div className="card" style={{ padding: "36px", display: "flex", gap: "28px", alignItems: "center", flexWrap: "wrap" }}>
-            <div
-              style={{
-                width: 72,
-                height: 72,
-                borderRadius: "50%",
-                background: "linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-                fontSize: "1.8rem",
-                fontFamily: "var(--font-mono)",
-                fontWeight: 500,
-                color: "#0A0E14",
-              }}
-            >
-              A
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontFamily: "var(--font-mono)", fontSize: "1.1rem", fontWeight: 500, color: "var(--text-primary)", marginBottom: "4px" }}>
-                Anish
-              </h3>
-              <p style={{ fontFamily: "var(--font-body)", fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "16px" }}>
-                B.Tech Student · VIT Bhopal · ML / Deep Learning
-              </p>
-              <p style={{ fontFamily: "var(--font-body)", fontSize: "0.875rem", color: "var(--text-secondary)", lineHeight: 1.7, maxWidth: 540 }}>
-                This project demonstrates an end-to-end ML pipeline from raw data to a deployed web application, covering transfer learning, model fine-tuning, REST API development, and full-stack web development.
-              </p>
-            </div>
-            <a
-              href="https://github.com/anish27863"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-outline"
-              style={{ fontSize: "0.875rem" }}
-            >
-              <GitBranch size={16} /> GitHub Profile
-            </a>
-          </div>
-        </section>
-
         {/* ── Prominent Medical Disclaimer ─────────────────────────────── */}
         <section style={{ marginBottom: "32px" }}>
           <DisclaimerBanner />
