@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: neuroscan-backend
+    env: docker
+    region: ohio
+    plan: starter # PyTorch requires at least 512MB RAM, 'starter' or higher is recommended
+    healthCheckPath: /health
+    envVars:
+      - key: ALLOW_ALL_ORIGINS
+        value: "true"
+      - key: MODEL_PATH
+        value: "models/efficientnet_finetuned_best.pth"
