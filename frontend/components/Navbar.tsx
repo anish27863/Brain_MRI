@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Brain, Home, FlaskConical, BarChart3, Info } from "lucide-react";
+import { Brain, Home, FlaskConical, BarChart3, Info, Moon, Sun } from "lucide-react";
 
 const navLinks = [
   { href: "/",       label: "Home",  icon: Home },
@@ -15,12 +15,25 @@ const navLinks = [
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
+  const [theme, setTheme] = useState<"light" | "dark">("light");
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", onScroll, { passive: true });
+    
+    // Initialize theme from HTML element (set by layout.tsx script)
+    const currentTheme = document.documentElement.getAttribute("data-theme") as "light" | "dark" || "light";
+    setTheme(currentTheme);
+
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  const toggleTheme = () => {
+    const newTheme = theme === "light" ? "dark" : "light";
+    setTheme(newTheme);
+    document.documentElement.setAttribute("data-theme", newTheme);
+    localStorage.setItem("theme", newTheme);
+  };
 
   return (
     <>
@@ -38,7 +51,8 @@ export default function Navbar() {
           padding: "0 48px",
           justifyContent: "space-between",
           transition: "background 0.3s ease, backdrop-filter 0.3s ease, border-bottom 0.3s ease",
-          background: scrolled ? "rgba(247, 245, 240, 0.95)" : "transparent",
+          background: scrolled ? "var(--bg-primary)" : "transparent",
+          opacity: scrolled ? 0.95 : 1,
           backdropFilter: scrolled ? "blur(16px)" : "none",
           borderBottom: scrolled ? "1px solid var(--border-dark)" : "1px solid transparent",
         }}
@@ -64,7 +78,7 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop links */}
-        <div style={{ display: "flex", gap: "16px" }} className="hidden-mobile">
+        <div style={{ display: "flex", gap: "16px", alignItems: "center" }} className="hidden-mobile">
           {navLinks.map(({ href, label }) => {
             const active = pathname === href;
             return (
@@ -88,12 +102,34 @@ export default function Navbar() {
               </Link>
             );
           })}
-        </div>
 
-        {/* CTA button */}
-        <Link href="/demo" className="btn-primary hidden-mobile" style={{ fontSize: "0.85rem", padding: "9px 20px" }}>
-          Initiate Demo
-        </Link>
+          <div style={{ width: "1px", height: "24px", background: "var(--border-subtle)", margin: "0 8px" }} />
+
+          <button
+            onClick={toggleTheme}
+            style={{
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              padding: "6px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-secondary)",
+              transition: "color 0.2s",
+            }}
+            onMouseOver={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
+            onMouseOut={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+            aria-label="Toggle Theme"
+          >
+            {theme === "light" ? <Moon size={20} /> : <Sun size={20} />}
+          </button>
+
+          {/* CTA button */}
+          <Link href="/demo" className="btn-primary" style={{ fontSize: "0.85rem", padding: "9px 20px", marginLeft: "12px" }}>
+            Initiate Demo
+          </Link>
+        </div>
       </nav>
 
       {/* ── Mobile Bottom Nav ─────────────────────────────────────────── */}
@@ -106,7 +142,8 @@ export default function Navbar() {
           right: 0,
           zIndex: 100,
           height: "64px",
-          background: "rgba(247, 245, 240, 0.95)",
+          background: "var(--bg-primary)",
+          opacity: 0.95,
           backdropFilter: "blur(16px)",
           borderTop: "1px solid var(--border-dark)",
           display: "flex",
@@ -139,6 +176,24 @@ export default function Navbar() {
             </Link>
           );
         })}
+        <button
+          onClick={toggleTheme}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "3px",
+            padding: "8px 16px",
+            background: "transparent",
+            border: "none",
+            color: "var(--text-secondary)",
+          }}
+        >
+          {theme === "light" ? <Moon size={20} strokeWidth={1.7} /> : <Sun size={20} strokeWidth={1.7} />}
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.7rem", fontWeight: 400, textTransform: "uppercase" }}>
+            Theme
+          </span>
+        </button>
       </nav>
 
       <style>{`

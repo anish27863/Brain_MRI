@@ -37,6 +37,22 @@
   --font-heading: 'Cormorant Garamond', serif;
 }
 
+html[data-theme='dark'] {
+  --bg-primary:    #0C0C0C;
+  --bg-secondary:  #141414;
+  --bg-elevated:   #1C1C1C;
+
+  --text-primary:   #F7F5F0;
+  --text-secondary: #A0A0A0;
+  --text-tertiary:  #666666;
+
+  --border-subtle: rgba(255, 255, 255, 0.15);
+  --border-dark:   #F7F5F0;
+  
+  --accent-glow:      rgba(211, 47, 47, 0.15);
+  --accent-glow-md:   rgba(211, 47, 47, 0.25);
+}
+
 @theme inline {
   --color-background: var(--bg-primary);
   --color-foreground: var(--text-primary);
