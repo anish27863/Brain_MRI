@@ -1,22 +1,26 @@
 # Use official Python lightweight image
 FROM python:3.10-slim
 
-# Set working directory
-WORKDIR /app
+# Hugging Face Spaces require running as a non-root user
+RUN useradd -m -u 1000 user
+USER user
+ENV PATH="/home/user/.local/bin:$PATH"
 
-# Install dependencies
-# We install PyTorch CPU version to save space and memory, since VPS/cloud deployments usually don't have GPUs
+# Set working directory
+WORKDIR /home/user/app
+
+# Install PyTorch CPU version to save space and memory
 RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # Copy requirements and install remaining deps
-COPY requirements.txt .
+COPY --chown=user:user requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY --chown=user:user . .
 
-# Expose the port
-EXPOSE 8000
+# Expose the default port for Hugging Face Spaces
+EXPOSE 7860
 
 # Run the FastAPI server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
