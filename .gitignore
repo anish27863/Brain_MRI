@@ -49,3 +49,14 @@ Thumbs.db
 node_modules/
 .next/
 npm-debug.log
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/out/
+
+# Backend
+backend/__pycache__/
+backend/.env
+backend/models/*.pth
