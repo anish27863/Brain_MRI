@@ -38,9 +38,9 @@ export default function Navbar() {
           padding: "0 48px",
           justifyContent: "space-between",
           transition: "background 0.3s ease, backdrop-filter 0.3s ease, border-bottom 0.3s ease",
-          background: scrolled ? "rgba(10,14,20,0.85)" : "transparent",
+          background: scrolled ? "rgba(247, 245, 240, 0.95)" : "transparent",
           backdropFilter: scrolled ? "blur(16px)" : "none",
-          borderBottom: scrolled ? "1px solid var(--border-subtle)" : "1px solid transparent",
+          borderBottom: scrolled ? "1px solid var(--border-dark)" : "1px solid transparent",
         }}
       >
         {/* Logo */}
@@ -49,23 +49,22 @@ export default function Navbar() {
             style={{
               width: 36,
               height: 36,
-              borderRadius: "50%",
-              background: "linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))",
+              background: "var(--text-primary)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              boxShadow: "0 0 12px var(--accent-glow)",
+              border: "1px solid var(--border-dark)",
             }}
           >
-            <Brain size={20} color="#0A0E14" strokeWidth={2.2} />
+            <Brain size={20} color="var(--bg-primary)" strokeWidth={2.2} />
           </div>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: "1.1rem", fontWeight: 500, color: "var(--text-primary)" }}>
-            NeuroScan <span style={{ color: "var(--accent-primary)" }}>AI</span>
+          <span style={{ fontFamily: "var(--font-heading)", fontSize: "1.4rem", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "0.02em" }}>
+            NeuroScan <span style={{ fontStyle: "italic", color: "var(--accent-primary)" }}>AI</span>
           </span>
         </Link>
 
         {/* Desktop links */}
-        <div style={{ display: "flex", gap: "4px" }} className="hidden-mobile">
+        <div style={{ display: "flex", gap: "16px" }} className="hidden-mobile">
           {navLinks.map(({ href, label }) => {
             const active = pathname === href;
             return (
@@ -73,16 +72,16 @@ export default function Navbar() {
                 key={href}
                 href={href}
                 style={{
-                  fontFamily: "var(--font-body)",
+                  fontFamily: "var(--font-mono)",
                   fontSize: "0.9rem",
-                  fontWeight: active ? 600 : 400,
-                  color: active ? "var(--accent-primary)" : "var(--text-secondary)",
+                  fontWeight: 500,
+                  color: active ? "var(--text-primary)" : "var(--text-secondary)",
                   textDecoration: "none",
-                  padding: "8px 16px",
-                  borderRadius: "8px",
-                  background: active ? "var(--accent-glow)" : "transparent",
-                  border: active ? "1px solid var(--border-accent)" : "1px solid transparent",
+                  padding: "6px 12px",
+                  borderBottom: active ? "2px solid var(--accent-primary)" : "2px solid transparent",
                   transition: "all 0.2s ease",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em"
                 }}
               >
                 {label}
@@ -93,7 +92,7 @@ export default function Navbar() {
 
         {/* CTA button */}
         <Link href="/demo" className="btn-primary hidden-mobile" style={{ fontSize: "0.85rem", padding: "9px 20px" }}>
-          Try Demo
+          Initiate Demo
         </Link>
       </nav>
 
@@ -107,9 +106,9 @@ export default function Navbar() {
           right: 0,
           zIndex: 100,
           height: "64px",
-          background: "rgba(17,24,39,0.95)",
+          background: "rgba(247, 245, 240, 0.95)",
           backdropFilter: "blur(16px)",
-          borderTop: "1px solid var(--border-subtle)",
+          borderTop: "1px solid var(--border-dark)",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-around",
@@ -134,7 +133,7 @@ export default function Navbar() {
               }}
             >
               <Icon size={20} strokeWidth={active ? 2.2 : 1.7} />
-              <span style={{ fontFamily: "var(--font-body)", fontSize: "0.7rem", fontWeight: active ? 600 : 400 }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.7rem", fontWeight: active ? 600 : 400, textTransform: "uppercase" }}>
                 {label}
               </span>
             </Link>

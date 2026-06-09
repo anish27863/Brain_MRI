@@ -7,9 +7,9 @@ export default function DisclaimerBanner({ compact = false }: { compact?: boolea
   return (
     <div
       style={{
-        background: "rgba(245, 158, 11, 0.08)",
-        border: "1px solid rgba(245, 158, 11, 0.3)",
-        borderRadius: "12px",
+        background: "var(--bg-primary)",
+        border: "1px solid var(--border-dark)",
+        borderLeft: "4px solid var(--warning)",
         padding: compact ? "16px 20px" : "24px 28px",
         display: "flex",
         gap: "16px",
@@ -25,8 +25,8 @@ export default function DisclaimerBanner({ compact = false }: { compact?: boolea
             style={{
               fontFamily: "var(--font-mono)",
               fontSize: "0.75rem",
-              fontWeight: 500,
-              color: "var(--warning)",
+              fontWeight: 600,
+              color: "var(--text-primary)",
               letterSpacing: "0.1em",
               textTransform: "uppercase",
               marginBottom: "8px",
@@ -38,8 +38,8 @@ export default function DisclaimerBanner({ compact = false }: { compact?: boolea
         <p
           style={{
             fontFamily: "var(--font-body)",
-            fontSize: compact ? "0.8rem" : "0.9rem",
-            color: "rgba(245, 158, 11, 0.85)",
+            fontSize: compact ? "0.85rem" : "1.05rem",
+            color: "var(--text-secondary)",
             lineHeight: 1.65,
           }}
         >

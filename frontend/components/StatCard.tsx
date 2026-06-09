@@ -63,21 +63,20 @@ export default function StatCard({ value, label, suffix = "", prefix = "", decim
   return (
     <div
       ref={ref}
-      className="card"
       style={{
-        padding: "28px 24px",
+        padding: "32px 24px",
         textAlign: "center",
-        background: "var(--bg-elevated)",
+        background: "transparent",
       }}
     >
       <div
         style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: "clamp(1.8rem, 3vw, 2.5rem)",
+          fontFamily: "var(--font-heading)",
+          fontSize: "clamp(2.5rem, 4vw, 3.5rem)",
           fontWeight: 500,
           color: "var(--accent-primary)",
           lineHeight: 1,
-          marginBottom: "10px",
+          marginBottom: "16px",
           letterSpacing: "-0.02em",
         }}
       >
@@ -85,12 +84,12 @@ export default function StatCard({ value, label, suffix = "", prefix = "", decim
       </div>
       <div
         style={{
-          fontFamily: "var(--font-body)",
+          fontFamily: "var(--font-mono)",
           fontSize: "0.85rem",
           color: "var(--text-secondary)",
-          fontWeight: 400,
+          fontWeight: 600,
           textTransform: "uppercase",
-          letterSpacing: "0.06em",
+          letterSpacing: "0.1em",
         }}
       >
         {label}
