@@ -41,7 +41,8 @@ export interface ModelInfo {
   };
 }
 
-export async function predictTumor(file: File): Promise<PredictionResponse> {
+
+export async function predictTumor(file: File) {
   const formData = new FormData();
   formData.append("file", file);
 
@@ -51,7 +52,17 @@ export async function predictTumor(file: File): Promise<PredictionResponse> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json();
+    
+    // Handle OOD detection error
+    if (error.detail?.error === "NOT_BRAIN_MRI") {
+      throw new Error(JSON.stringify({
+        type: "NOT_BRAIN_MRI",
+        message: error.detail.message,
+        mri_confidence: error.detail.mri_confidence
+      }));
+    }
+    
     throw new Error(error.detail || "Prediction failed");
   }
 
@@ -75,3 +86,4 @@ export async function checkHealth(): Promise<{ status: string; model_loaded: boo
   if (!response.ok) throw new Error("Health check failed");
   return response.json();
 }
+

@@ -3,159 +3,175 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import torch
 import os
-import urllib.request
 
 from model import load_model, predict, CLASS_NAMES
+from ood_detector import load_ood_detector, is_brain_mri
 
-# ---------------------------------------------------------------------------
-# Global state
-# ---------------------------------------------------------------------------
+# Global model variables
 ml_model = None
+ood_model = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-MODEL_URL = (
-    "https://github.com/anish27863/brain-tumor-mri/releases/download/v1.0/"
-    "efficientnet_finetuned_best.pth"
-)
-
-
-def _ensure_weights(weights_path: str) -> None:
-    """Download model weights if not present locally."""
-    if not os.path.exists(weights_path):
-        print(f"[startup] Model weights not found at '{weights_path}'. Downloading...")
-        os.makedirs(os.path.dirname(weights_path), exist_ok=True)
-        try:
-            urllib.request.urlretrieve(MODEL_URL, weights_path)
-            print("[startup] Model weights downloaded successfully.")
-        except Exception as e:
-            print(f"[startup] WARNING: Could not download model weights: {e}")
-            print("[startup] Place weights manually at:", weights_path)
-
-
-# ---------------------------------------------------------------------------
-# Lifespan (startup / shutdown)
-# ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global ml_model
-    weights_path = os.getenv("MODEL_PATH", "models/efficientnet_finetuned_best.pth")
-    _ensure_weights(weights_path)
-
-    if os.path.exists(weights_path):
-        print(f"[startup] Loading model from '{weights_path}' on {device} ...")
-        ml_model = load_model(weights_path, device)
-        print("[startup] Model loaded successfully!")
-    else:
-        print("[startup] Model weights unavailable — /predict will return 503.")
-
+    # Load models on startup
+    global ml_model, ood_model
+    
+    print(f"\n{'='*60}")
+    print("LOADING MODELS")
+    print(f"{'='*60}")
+    print(f"Device: {device}")
+    
+    # Load tumor classifier
+    tumor_weights = os.getenv("TUMOR_MODEL_PATH", "models/efficientnet_finetuned_best.pth")
+    print(f"\nLoading tumor classifier from {tumor_weights}...")
+    ml_model = load_model(tumor_weights, device)
+    print("✓ Tumor classifier loaded")
+    
+    # Load OOD detector
+    ood_weights = os.getenv("OOD_MODEL_PATH", "models/ood_detector.pth")
+    print(f"\nLoading OOD detector from {ood_weights}...")
+    ood_model = load_ood_detector(ood_weights, device)
+    print("✓ OOD detector loaded")
+    
+    print(f"\n{'='*60}")
+    print("ALL MODELS READY")
+    print(f"{'='*60}\n")
+    
     yield
+    
+    # Cleanup on shutdown
+    del ml_model, ood_model
 
-    # Cleanup
-    del ml_model
-
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 app = FastAPI(
     title="NeuroScan AI",
-    description="Brain Tumor MRI Classification API — EfficientNet-B0, 98.97% accuracy, 30 classes.",
+    description="Brain Tumor MRI Classification API with OOD Detection",
     version="1.0.0",
-    lifespan=lifespan,
+    lifespan=lifespan
 )
 
-# CORS — allow Next.js dev & production
-# In development, ALLOW_ALL_ORIGINS=true skips the origin whitelist entirely
-_allow_all = os.getenv("ALLOW_ALL_ORIGINS", "true").lower() == "true"
-
+# CORS — allow Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if _allow_all else [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://your-app.vercel.app",     # ← replace with your Vercel URL
+    allow_origins=[
+        "http://localhost:3000",              # Local dev
+        "https://yourdomain.vercel.app",      # Production (update this)
     ],
-    allow_credentials=not _allow_all,      # credentials require explicit origins
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ============================================================================
+# ENDPOINTS
+# ============================================================================
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-@app.get("/", tags=["Health"])
+@app.get("/")
 def root():
-    return {"status": "ok", "message": "NeuroScan AI API is running"}
-
-
-@app.get("/health", tags=["Health"])
-def health():
+    """Health check endpoint."""
     return {
-        "status": "healthy",
-        "model_loaded": ml_model is not None,
-        "device": device,
+        "status": "ok",
+        "message": "NeuroScan AI API running",
+        "version": "1.0.0"
     }
 
+@app.get("/health")
+def health():
+    """Detailed health check."""
+    return {
+        "status": "healthy",
+        "tumor_classifier_loaded": ml_model is not None,
+        "ood_detector_loaded": ood_model is not None,
+        "device": str(device)
+    }
 
-@app.post("/predict", tags=["Inference"])
+@app.post("/predict")
 async def predict_tumor(file: UploadFile = File(...)):
     """
-    Upload an MRI image and receive top-5 tumor classification predictions.
-
-    - **Accepts:** JPEG, PNG
-    - **Max size:** 10 MB
-    - **Returns:** Top-5 predictions with class names and confidence scores (%)
+    Upload an MRI image and get tumor classification predictions.
+    
+    - First validates the image is a brain MRI (OOD detection)
+    - Then classifies the tumor type
+    - Returns top 5 predictions with confidence scores
     """
-    if ml_model is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Model is not loaded yet. Please wait a moment and try again.",
-        )
-
+    
+    # ========== VALIDATION ==========
+    
+    # File type check
     if file.content_type not in ["image/jpeg", "image/png", "image/jpg"]:
         raise HTTPException(
             status_code=400,
-            detail="Invalid file type. Only JPEG and PNG images are supported.",
+            detail="Invalid file type. Only JPEG and PNG are supported."
         )
-
+    
+    # Read image bytes
     image_bytes = await file.read()
-
+    
+    # File size check (max 10MB)
     if len(image_bytes) > 10 * 1024 * 1024:
         raise HTTPException(
             status_code=400,
-            detail="File too large. Maximum allowed size is 10 MB.",
+            detail="File too large. Maximum size is 10MB."
         )
-
+    
+    # ========== OOD DETECTION ==========
+    
+    print(f"[OOD Detection] Checking if image is a brain MRI...")
+    is_valid, mri_confidence = is_brain_mri(ood_model, image_bytes, device, threshold=0.5)
+    
+    if not is_valid:
+        print(f"[OOD Detection] ❌ Rejected (confidence: {mri_confidence}%)")
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "NOT_BRAIN_MRI",
+                "message": "This image does not appear to be a brain MRI scan.",
+                "mri_confidence": mri_confidence,
+                "suggestion": "Please upload a valid brain MRI image (T1, T1C+, or T2 weighted scan)."
+            }
+        )
+    
+    print(f"[OOD Detection] ✓ Valid brain MRI (confidence: {mri_confidence}%)")
+    
+    # ========== TUMOR CLASSIFICATION ==========
+    
+    print(f"[Classification] Running tumor classification...")
     try:
         predictions = predict(ml_model, image_bytes, device, top_k=5)
     except Exception as e:
+        print(f"[Classification] ❌ Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Prediction failed: {str(e)}",
+            detail=f"Prediction failed: {str(e)}"
         )
-
+    
+    top_confidence = predictions[0]["confidence"]
+    print(f"[Classification] ✓ Top prediction: {predictions[0]['class_name']} ({top_confidence}%)")
+    
+    # ========== RESPONSE ==========
+    
     return {
+        "valid": True,
+        "mri_confidence": mri_confidence,
         "predictions": predictions,
         "top_prediction": predictions[0],
-        "disclaimer": (
-            "NeuroScan AI is a research demonstration project built for educational "
-            "purposes. It is NOT a medical device and should NOT be used for clinical "
-            "diagnosis, medical decision-making, or patient care. Always consult a "
-            "qualified radiologist or medical professional for actual diagnosis."
-        ),
+        "disclaimer": "NeuroScan AI is a research demonstration. Not for clinical use. Always consult a qualified radiologist."
     }
 
 
-@app.get("/model-info", tags=["Model"])
+@app.get("/model-info")
 def model_info():
-    """Return model architecture and training statistics."""
+    """Return model statistics and class information."""
     return {
         "model_name": "EfficientNet-B0 (Fine-tuned)",
+        "ood_detector": "MobileNetV3-Small (Binary Classifier)",
         "num_classes": 30,
         "test_accuracy": 98.97,
         "f1_macro": 0.9898,
         "f1_weighted": 0.9897,
+        "ood_accuracy": 100.0,
+        "ood_mri_confidence": 99.99,
+        "ood_non_mri_confidence": 0.02,
         "training_images": 15820,
         "validation_images": 3390,
         "test_images": 3390,
@@ -168,45 +184,45 @@ def model_info():
             "learning_rate": 5e-5,
             "epochs": 30,
             "batch_size": 32,
-            "hardware": "NVIDIA RTX 4050 (6 GB VRAM)",
-        },
+            "hardware": "NVIDIA RTX 4050 (6GB VRAM)"
+        }
     }
 
 
-@app.get("/class-stats", tags=["Model"])
+@app.get("/class-stats")
 def class_stats():
-    """Return per-class precision, recall, and F1-score for all 30 classes."""
+    """Return per-class performance statistics."""
     return {
         "class_performance": [
-            {"class_name": "Astrocytoma T1",         "f1_score": 0.9917, "precision": 0.9835, "recall": 1.0000},
-            {"class_name": "Astrocytoma T1C+",        "f1_score": 0.9924, "precision": 0.9924, "recall": 0.9924},
-            {"class_name": "Astrocytoma T2",          "f1_score": 0.9884, "precision": 0.9770, "recall": 1.0000},
-            {"class_name": "Ependymoma T1",           "f1_score": 0.9519, "precision": 0.9570, "recall": 0.9468},
-            {"class_name": "Ependymoma T1C+",         "f1_score": 0.9956, "precision": 0.9912, "recall": 1.0000},
-            {"class_name": "Ependymoma T2",           "f1_score": 0.9372, "precision": 0.9510, "recall": 0.9238},
-            {"class_name": "Glioma T1",               "f1_score": 0.9871, "precision": 1.0000, "recall": 0.9745},
-            {"class_name": "Glioma T1C+",             "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Glioma T2",               "f1_score": 0.9918, "precision": 0.9837, "recall": 1.0000},
-            {"class_name": "Hemangiopericytoma T1",   "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Astrocytoma T1", "f1_score": 0.9917, "precision": 0.9835, "recall": 1.0000},
+            {"class_name": "Astrocytoma T1C+", "f1_score": 0.9924, "precision": 0.9924, "recall": 0.9924},
+            {"class_name": "Astrocytoma T2", "f1_score": 0.9884, "precision": 0.9770, "recall": 1.0000},
+            {"class_name": "Ependymoma T1", "f1_score": 0.9519, "precision": 0.9570, "recall": 0.9468},
+            {"class_name": "Ependymoma T1C+", "f1_score": 0.9956, "precision": 0.9912, "recall": 1.0000},
+            {"class_name": "Ependymoma T2", "f1_score": 0.9372, "precision": 0.9510, "recall": 0.9238},
+            {"class_name": "Glioma T1", "f1_score": 0.9871, "precision": 1.0000, "recall": 0.9745},
+            {"class_name": "Glioma T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Glioma T2", "f1_score": 0.9918, "precision": 0.9837, "recall": 1.0000},
+            {"class_name": "Hemangiopericytoma T1", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
             {"class_name": "Hemangiopericytoma T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Hemangiopericytoma T2",   "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Meningioma T1",           "f1_score": 0.9974, "precision": 0.9948, "recall": 1.0000},
-            {"class_name": "Meningioma T1C+",         "f1_score": 0.9966, "precision": 0.9966, "recall": 0.9966},
-            {"class_name": "Meningioma T2",           "f1_score": 0.9815, "precision": 1.0000, "recall": 0.9638},
-            {"class_name": "Neurocytoma T1",          "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Neurocytoma T1C+",        "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Neurocytoma T2",          "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Normal T1",               "f1_score": 0.9919, "precision": 1.0000, "recall": 0.9839},
-            {"class_name": "Normal T1C+",             "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Normal T2",               "f1_score": 0.9741, "precision": 0.9496, "recall": 1.0000},
-            {"class_name": "Oligodendroglioma T1",    "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Oligodendroglioma T1C+",  "f1_score": 0.9912, "precision": 1.0000, "recall": 0.9825},
-            {"class_name": "Oligodendroglioma T2",    "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Other T1",                "f1_score": 0.9714, "precision": 0.9754, "recall": 0.9675},
-            {"class_name": "Other T1C+",              "f1_score": 0.9978, "precision": 1.0000, "recall": 0.9956},
-            {"class_name": "Other T2",                "f1_score": 0.9864, "precision": 0.9732, "recall": 1.0000},
-            {"class_name": "Schwannoma T1",           "f1_score": 0.9909, "precision": 0.9820, "recall": 1.0000},
-            {"class_name": "Schwannoma T1C+",         "f1_score": 0.9912, "precision": 0.9882, "recall": 0.9941},
-            {"class_name": "Schwannoma T2",           "f1_score": 0.9890, "precision": 1.0000, "recall": 0.9783},
+            {"class_name": "Hemangiopericytoma T2", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Meningioma T1", "f1_score": 0.9974, "precision": 0.9948, "recall": 1.0000},
+            {"class_name": "Meningioma T1C+", "f1_score": 0.9966, "precision": 0.9966, "recall": 0.9966},
+            {"class_name": "Meningioma T2", "f1_score": 0.9815, "precision": 1.0000, "recall": 0.9638},
+            {"class_name": "Neurocytoma T1", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Neurocytoma T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Neurocytoma T2", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Normal T1", "f1_score": 0.9919, "precision": 1.0000, "recall": 0.9839},
+            {"class_name": "Normal T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Normal T2", "f1_score": 0.9741, "precision": 0.9496, "recall": 1.0000},
+            {"class_name": "Oligodendroglioma T1", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Oligodendroglioma T1C+", "f1_score": 0.9912, "precision": 1.0000, "recall": 0.9825},
+            {"class_name": "Oligodendroglioma T2", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
+            {"class_name": "Other T1", "f1_score": 0.9714, "precision": 0.9754, "recall": 0.9675},
+            {"class_name": "Other T1C+", "f1_score": 0.9978, "precision": 1.0000, "recall": 0.9956},
+            {"class_name": "Other T2", "f1_score": 0.9864, "precision": 0.9732, "recall": 1.0000},
+            {"class_name": "Schwannoma T1", "f1_score": 0.9909, "precision": 0.9820, "recall": 1.0000},
+            {"class_name": "Schwannoma T1C+", "f1_score": 0.9912, "precision": 0.9882, "recall": 0.9941},
+            {"class_name": "Schwannoma T2", "f1_score": 0.9890, "precision": 1.0000, "recall": 0.9783}
         ]
     }

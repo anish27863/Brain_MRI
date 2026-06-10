@@ -35,6 +35,7 @@ export default function UploadZone({ onFile, disabled }: UploadZoneProps) {
       onFile(file);
     },
     [onFile]
+    
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
