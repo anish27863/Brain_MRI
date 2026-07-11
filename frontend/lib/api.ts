@@ -6,10 +6,18 @@ export interface Prediction {
   confidence: number;
 }
 
+export interface VisualizationResponse {
+  ood_detector?: string;
+  tumor_classifier?: string;
+}
+
 export interface PredictionResponse {
   predictions: Prediction[];
   top_prediction: Prediction;
   disclaimer: string;
+
+  // Grad-CAM visualization URLs
+  visualizations?: VisualizationResponse;
 }
 
 export interface ClassPerformance {
@@ -41,28 +49,66 @@ export interface ModelInfo {
   };
 }
 
-
-export async function predictTumor(file: File) {
+/**
+ * Original prediction endpoint
+ */
+export async function predictTumor(
+  file: File
+): Promise<PredictionResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE}/predict`, {
+  const response = await fetch(`${API_BASE}/predict-with-gradcam`, {
     method: "POST",
     body: formData,
   });
 
   if (!response.ok) {
     const error = await response.json();
-    
-    // Handle OOD detection error
+
     if (error.detail?.error === "NOT_BRAIN_MRI") {
-      throw new Error(JSON.stringify({
-        type: "NOT_BRAIN_MRI",
-        message: error.detail.message,
-        mri_confidence: error.detail.mri_confidence
-      }));
+      throw new Error(
+        JSON.stringify({
+          type: "NOT_BRAIN_MRI",
+          message: error.detail.message,
+          mri_confidence: error.detail.mri_confidence,
+        })
+      );
     }
-    
+
+    throw new Error(error.detail || "Prediction failed");
+  }
+
+  return response.json();
+}
+
+/**
+ * Prediction endpoint with Grad-CAM visualizations
+ */
+export async function predictTumorWithVisualization(
+  file: File
+): Promise<PredictionResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE}/predict-with-gradcam`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+
+    if (error.detail?.error === "NOT_BRAIN_MRI") {
+      throw new Error(
+        JSON.stringify({
+          type: "NOT_BRAIN_MRI",
+          message: error.detail.message,
+          mri_confidence: error.detail.mri_confidence,
+        })
+      );
+    }
+
     throw new Error(error.detail || "Prediction failed");
   }
 
@@ -71,19 +117,36 @@ export async function predictTumor(file: File) {
 
 export async function getModelInfo(): Promise<ModelInfo> {
   const response = await fetch(`${API_BASE}/model-info`);
-  if (!response.ok) throw new Error("Failed to fetch model info");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch model info");
+  }
+
   return response.json();
 }
 
-export async function getClassStats(): Promise<{ class_performance: ClassPerformance[] }> {
+export async function getClassStats(): Promise<{
+  class_performance: ClassPerformance[];
+}> {
   const response = await fetch(`${API_BASE}/class-stats`);
-  if (!response.ok) throw new Error("Failed to fetch class stats");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch class stats");
+  }
+
   return response.json();
 }
 
-export async function checkHealth(): Promise<{ status: string; model_loaded: boolean; device: string }> {
+export async function checkHealth(): Promise<{
+  status: string;
+  model_loaded: boolean;
+  device: string;
+}> {
   const response = await fetch(`${API_BASE}/health`);
-  if (!response.ok) throw new Error("Health check failed");
+
+  if (!response.ok) {
+    throw new Error("Health check failed");
+  }
+
   return response.json();
 }
-

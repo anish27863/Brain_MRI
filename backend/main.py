@@ -2,20 +2,110 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import torch
+import torch.nn.functional as F
+import numpy as np
+from PIL import Image
+import cv2
+import io
+import base64
 import os
 
 from model import load_model, predict, CLASS_NAMES
 from ood_detector import load_ood_detector, is_brain_mri
 
-# Global model variables
+# ============================================================================
+# GRAD-CAM IMPLEMENTATION
+# ============================================================================
+
+class GradCAM:
+    """Generates Grad-CAM visualizations"""
+    
+    def __init__(self, model, target_layer):
+        self.model = model
+        self.target_layer = target_layer
+        self.gradients = None
+        self.activations = None
+        
+        self.target_layer.register_forward_hook(self.save_activations)
+        self.target_layer.register_backward_hook(self.save_gradients)
+    
+    def save_activations(self, module, input, output):
+        self.activations = output.detach()
+    
+    def save_gradients(self, module, grad_input, grad_output):
+        self.gradients = grad_output[0].detach()
+    
+    def generate_cam(self, input_tensor):
+        """Generate Grad-CAM heatmap"""
+        self.model.eval()
+        output = self.model(input_tensor)
+        
+        self.model.zero_grad()
+        target_score = output[0].max()
+        target_score.backward()
+        
+        gradients = self.gradients[0]
+        activations = self.activations[0]
+        
+        weights = gradients.mean(dim=[1, 2])
+        cam = (weights.unsqueeze(-1).unsqueeze(-1) * activations).sum(dim=0)
+        cam = F.relu(cam)
+        
+        cam_min = cam.min()
+        cam_max = cam.max()
+        if cam_max > cam_min:
+            cam = (cam - cam_min) / (cam_max - cam_min)
+        
+        return cam.cpu().numpy()
+
+
+def overlay_heatmap(image_tensor, heatmap, alpha=0.4):
+    """Overlay Grad-CAM heatmap on image"""
+    # Denormalize image
+    mean = np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
+    std = np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
+    
+    image_array = image_tensor.cpu().numpy()
+    image_array = (image_array * std + mean) * 255
+    image_array = np.clip(image_array, 0, 255).astype(np.uint8)
+    image_array = np.transpose(image_array, (1, 2, 0))
+    
+    # Convert to BGR
+    image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+    
+    # Resize heatmap
+    heatmap = cv2.resize(heatmap, (image_array.shape[1], image_array.shape[0]))
+    heatmap_uint8 = (heatmap * 255).astype(np.uint8)
+    heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+    
+    # Blend
+    overlaid = cv2.addWeighted(image_array, 1 - alpha, heatmap_colored, alpha, 0)
+    overlaid = cv2.cvtColor(overlaid, cv2.COLOR_BGR2RGB)
+    
+    return overlaid
+
+
+def image_to_base64(image_array):
+    """Convert image array to base64 PNG"""
+    img = Image.fromarray(image_array.astype(np.uint8))
+    img_bytes = io.BytesIO()
+    img.save(img_bytes, format='PNG')
+    img_bytes.seek(0)
+    return base64.b64encode(img_bytes.getvalue()).decode()
+
+# ============================================================================
+# GLOBAL VARIABLES & LIFESPAN
+# ============================================================================
+
 ml_model = None
 ood_model = None
+grad_cam_ood = None
+grad_cam_tumor = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load models on startup
-    global ml_model, ood_model
+    global ml_model, ood_model, grad_cam_ood, grad_cam_tumor
     
     print(f"\n{'='*60}")
     print("LOADING MODELS")
@@ -34,28 +124,32 @@ async def lifespan(app: FastAPI):
     ood_model = load_ood_detector(ood_weights, device)
     print("✓ OOD detector loaded")
     
+    # Initialize Grad-CAM
+    print("\nInitializing Grad-CAM...")
+    grad_cam_ood = GradCAM(ood_model, ood_model.backbone.features[-1])
+    grad_cam_tumor = GradCAM(ml_model, ml_model.features[-1])
+    print("✓ Grad-CAM initialized")
+    
     print(f"\n{'='*60}")
     print("ALL MODELS READY")
     print(f"{'='*60}\n")
     
     yield
     
-    # Cleanup on shutdown
-    del ml_model, ood_model
+    del ml_model, ood_model, grad_cam_ood, grad_cam_tumor
 
 app = FastAPI(
     title="NeuroScan AI",
-    description="Brain Tumor MRI Classification API with OOD Detection",
+    description="Brain Tumor MRI Classification API with OOD Detection & Grad-CAM",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# CORS — allow Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",              # Local dev
-        "https://yourdomain.vercel.app",      # Production (update this)
+        "http://localhost:3000",
+        "https://yourdomain.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -68,161 +162,138 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    """Health check endpoint."""
     return {
         "status": "ok",
-        "message": "NeuroScan AI API running",
+        "message": "NeuroScan AI API running with Grad-CAM",
         "version": "1.0.0"
     }
 
 @app.get("/health")
 def health():
-    """Detailed health check."""
     return {
         "status": "healthy",
         "tumor_classifier_loaded": ml_model is not None,
         "ood_detector_loaded": ood_model is not None,
+        "grad_cam_ready": grad_cam_ood is not None,
         "device": str(device)
     }
 
 @app.post("/predict")
 async def predict_tumor(file: UploadFile = File(...)):
-    """
-    Upload an MRI image and get tumor classification predictions.
+    """Basic prediction endpoint (no Grad-CAM)"""
     
-    - First validates the image is a brain MRI (OOD detection)
-    - Then classifies the tumor type
-    - Returns top 5 predictions with confidence scores
-    """
-    
-    # ========== VALIDATION ==========
-    
-    # File type check
     if file.content_type not in ["image/jpeg", "image/png", "image/jpg"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid file type. Only JPEG and PNG are supported."
-        )
+        raise HTTPException(status_code=400, detail="Only JPEG/PNG supported")
     
-    # Read image bytes
     image_bytes = await file.read()
     
-    # File size check (max 10MB)
     if len(image_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(
-            status_code=400,
-            detail="File too large. Maximum size is 10MB."
-        )
+        raise HTTPException(status_code=400, detail="File must be under 10MB")
     
-    # ========== OOD DETECTION ==========
-    
-    print(f"[OOD Detection] Checking if image is a brain MRI...")
+    # OOD Detection
     is_valid, mri_confidence = is_brain_mri(ood_model, image_bytes, device, threshold=0.5)
     
     if not is_valid:
-        print(f"[OOD Detection] ❌ Rejected (confidence: {mri_confidence}%)")
         raise HTTPException(
             status_code=422,
             detail={
                 "error": "NOT_BRAIN_MRI",
                 "message": "This image does not appear to be a brain MRI scan.",
                 "mri_confidence": mri_confidence,
-                "suggestion": "Please upload a valid brain MRI image (T1, T1C+, or T2 weighted scan)."
             }
         )
     
-    print(f"[OOD Detection] ✓ Valid brain MRI (confidence: {mri_confidence}%)")
-    
-    # ========== TUMOR CLASSIFICATION ==========
-    
-    print(f"[Classification] Running tumor classification...")
-    try:
-        predictions = predict(ml_model, image_bytes, device, top_k=5)
-    except Exception as e:
-        print(f"[Classification] ❌ Error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Prediction failed: {str(e)}"
-        )
-    
-    top_confidence = predictions[0]["confidence"]
-    print(f"[Classification] ✓ Top prediction: {predictions[0]['class_name']} ({top_confidence}%)")
-    
-    # ========== RESPONSE ==========
+    # Tumor Classification
+    predictions = predict(ml_model, image_bytes, device, top_k=5)
     
     return {
         "valid": True,
         "mri_confidence": mri_confidence,
         "predictions": predictions,
         "top_prediction": predictions[0],
-        "disclaimer": "NeuroScan AI is a research demonstration. Not for clinical use. Always consult a qualified radiologist."
+        "disclaimer": "Research demo only. Not for clinical use."
     }
 
+@app.post("/predict-with-gradcam")
+async def predict_with_visualization(file: UploadFile = File(...)):
+    """
+    Prediction with Grad-CAM visualizations
+    Shows which regions the model is focusing on
+    """
+    
+    if file.content_type not in ["image/jpeg", "image/png", "image/jpg"]:
+        raise HTTPException(status_code=400, detail="Only JPEG/PNG supported")
+    
+    image_bytes = await file.read()
+    
+    if len(image_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File must be under 10MB")
+    
+    # Prepare image tensor
+    from torchvision import transforms
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                           std=[0.229, 0.224, 0.225])
+    ])
+    
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    image_tensor = transform(image).unsqueeze(0).to(device)
+    
+    # OOD Detection
+    is_valid, mri_confidence = is_brain_mri(ood_model, image_bytes, device, threshold=0.5)
+    
+    if not is_valid:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "NOT_BRAIN_MRI",
+                "message": "This image does not appear to be a brain MRI scan.",
+                "mri_confidence": mri_confidence,
+            }
+        )
+    
+    # Tumor Classification
+    predictions = predict(ml_model, image_bytes, device, top_k=5)
+    
+    # Generate Grad-CAM visualizations
+    print("[Grad-CAM] Generating visualizations...")
+    try:
+        ood_cam = grad_cam_ood.generate_cam(image_tensor)
+        ood_overlay = overlay_heatmap(image_tensor[0], ood_cam)
+        ood_b64 = image_to_base64(ood_overlay)
+        
+        tumor_cam = grad_cam_tumor.generate_cam(image_tensor)
+        tumor_overlay = overlay_heatmap(image_tensor[0], tumor_cam)
+        tumor_b64 = image_to_base64(tumor_overlay)
+        
+        print("[Grad-CAM] ✓ Visualizations generated")
+    except Exception as e:
+        print(f"[Grad-CAM] ❌ Error: {e}")
+        ood_b64 = None
+        tumor_b64 = None
+    
+    return {
+        "valid": True,
+        "mri_confidence": mri_confidence,
+        "predictions": predictions,
+        "top_prediction": predictions[0],
+        "visualizations": {
+            "ood_detector": f"data:image/png;base64,{ood_b64}" if ood_b64 else None,
+            "tumor_classifier": f"data:image/png;base64,{tumor_b64}" if tumor_b64 else None
+        },
+        "disclaimer": "Research demo only. Not for clinical use."
+    }
 
 @app.get("/model-info")
 def model_info():
-    """Return model statistics and class information."""
     return {
         "model_name": "EfficientNet-B0 (Fine-tuned)",
         "ood_detector": "MobileNetV3-Small (Binary Classifier)",
-        "num_classes": 30,
+        "visualizations": "Grad-CAM available",
         "test_accuracy": 98.97,
         "f1_macro": 0.9898,
-        "f1_weighted": 0.9897,
-        "ood_accuracy": 100.0,
-        "ood_mri_confidence": 99.99,
-        "ood_non_mri_confidence": 0.02,
-        "training_images": 15820,
-        "validation_images": 3390,
-        "test_images": 3390,
-        "total_images": 22600,
-        "image_size": 224,
-        "parameters": 4200000,
+        "num_classes": 30,
         "classes": CLASS_NAMES,
-        "training_details": {
-            "optimizer": "Adam",
-            "learning_rate": 5e-5,
-            "epochs": 30,
-            "batch_size": 32,
-            "hardware": "NVIDIA RTX 4050 (6GB VRAM)"
-        }
-    }
-
-
-@app.get("/class-stats")
-def class_stats():
-    """Return per-class performance statistics."""
-    return {
-        "class_performance": [
-            {"class_name": "Astrocytoma T1", "f1_score": 0.9917, "precision": 0.9835, "recall": 1.0000},
-            {"class_name": "Astrocytoma T1C+", "f1_score": 0.9924, "precision": 0.9924, "recall": 0.9924},
-            {"class_name": "Astrocytoma T2", "f1_score": 0.9884, "precision": 0.9770, "recall": 1.0000},
-            {"class_name": "Ependymoma T1", "f1_score": 0.9519, "precision": 0.9570, "recall": 0.9468},
-            {"class_name": "Ependymoma T1C+", "f1_score": 0.9956, "precision": 0.9912, "recall": 1.0000},
-            {"class_name": "Ependymoma T2", "f1_score": 0.9372, "precision": 0.9510, "recall": 0.9238},
-            {"class_name": "Glioma T1", "f1_score": 0.9871, "precision": 1.0000, "recall": 0.9745},
-            {"class_name": "Glioma T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Glioma T2", "f1_score": 0.9918, "precision": 0.9837, "recall": 1.0000},
-            {"class_name": "Hemangiopericytoma T1", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Hemangiopericytoma T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Hemangiopericytoma T2", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Meningioma T1", "f1_score": 0.9974, "precision": 0.9948, "recall": 1.0000},
-            {"class_name": "Meningioma T1C+", "f1_score": 0.9966, "precision": 0.9966, "recall": 0.9966},
-            {"class_name": "Meningioma T2", "f1_score": 0.9815, "precision": 1.0000, "recall": 0.9638},
-            {"class_name": "Neurocytoma T1", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Neurocytoma T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Neurocytoma T2", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Normal T1", "f1_score": 0.9919, "precision": 1.0000, "recall": 0.9839},
-            {"class_name": "Normal T1C+", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Normal T2", "f1_score": 0.9741, "precision": 0.9496, "recall": 1.0000},
-            {"class_name": "Oligodendroglioma T1", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Oligodendroglioma T1C+", "f1_score": 0.9912, "precision": 1.0000, "recall": 0.9825},
-            {"class_name": "Oligodendroglioma T2", "f1_score": 1.0000, "precision": 1.0000, "recall": 1.0000},
-            {"class_name": "Other T1", "f1_score": 0.9714, "precision": 0.9754, "recall": 0.9675},
-            {"class_name": "Other T1C+", "f1_score": 0.9978, "precision": 1.0000, "recall": 0.9956},
-            {"class_name": "Other T2", "f1_score": 0.9864, "precision": 0.9732, "recall": 1.0000},
-            {"class_name": "Schwannoma T1", "f1_score": 0.9909, "precision": 0.9820, "recall": 1.0000},
-            {"class_name": "Schwannoma T1C+", "f1_score": 0.9912, "precision": 0.9882, "recall": 0.9941},
-            {"class_name": "Schwannoma T2", "f1_score": 0.9890, "precision": 1.0000, "recall": 0.9783}
-        ]
     }
