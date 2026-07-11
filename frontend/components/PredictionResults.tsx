@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import type { PredictionResponse } from "@/lib/api";
 import ConfidenceBar from "./ConfidenceBar";
 import DisclaimerBanner from "./DisclaimerBanner";
-import { RotateCcw, TrendingUp } from "lucide-react";
+import { RotateCcw, TrendingUp, Eye } from "lucide-react";
 
 interface PredictionResultsProps {
-  result: PredictionResponse;
+  result: PredictionResponse & { visualizations?: { ood_detector?: string; tumor_classifier?: string } };
   imageUrl: string;
   onReset: () => void;
 }
@@ -44,6 +44,10 @@ export default function PredictionResults({ result, imageUrl, onReset }: Predict
   const top = result.top_prediction;
   const { text: confLabel, color: confColor } = confidenceLabel(top.confidence);
   const others = result.predictions.slice(1);
+  
+  // Grad-CAM visualization state
+  const [activeVisualization, setActiveVisualization] = useState<"original" | "ood" | "tumor">("original");
+  const hasVisualizations = result.visualizations?.ood_detector || result.visualizations?.tumor_classifier;
 
   return (
     <div
@@ -86,18 +90,109 @@ export default function PredictionResults({ result, imageUrl, onReset }: Predict
       {/* ── Main card ───────────────────────────────────────────────────── */}
       <div className="card" style={{ padding: "24px", marginBottom: "16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "24px", alignItems: "start" }} className="results-inner">
-          {/* MRI preview */}
-          <div
-            style={{
-              borderRadius: "8px",
-              overflow: "hidden",
-              border: "1px solid var(--border-accent)",
-              aspectRatio: "1",
-              boxShadow: "0 0 16px var(--accent-glow)",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={imageUrl} alt="Uploaded MRI" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          {/* MRI preview with visualization tabs */}
+          <div>
+            {/* Visualization tabs (if Grad-CAM available) */}
+            {hasVisualizations && (
+              <div style={{ marginBottom: "12px", display: "flex", gap: "6px", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
+                <button
+                  onClick={() => setActiveVisualization("original")}
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.7rem",
+                    textTransform: "uppercase",
+                    padding: "4px 8px",
+                    border: "none",
+                    background: activeVisualization === "original" ? "var(--accent-primary)" : "transparent",
+                    color: activeVisualization === "original" ? "var(--bg-primary)" : "var(--text-secondary)",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  Original
+                </button>
+                {result.visualizations?.ood_detector && (
+                  <button
+                    onClick={() => setActiveVisualization("ood")}
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "0.7rem",
+                      textTransform: "uppercase",
+                      padding: "4px 8px",
+                      border: "none",
+                      background: activeVisualization === "ood" ? "var(--accent-primary)" : "transparent",
+                      color: activeVisualization === "ood" ? "var(--bg-primary)" : "var(--text-secondary)",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    MRI Check
+                  </button>
+                )}
+                {result.visualizations?.tumor_classifier && (
+                  <button
+                    onClick={() => setActiveVisualization("tumor")}
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "0.7rem",
+                      textTransform: "uppercase",
+                      padding: "4px 8px",
+                      border: "none",
+                      background: activeVisualization === "tumor" ? "var(--accent-primary)" : "transparent",
+                      color: activeVisualization === "tumor" ? "var(--bg-primary)" : "var(--text-secondary)",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    Tumor Focus
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Image display */}
+            <div
+              style={{
+                borderRadius: "8px",
+                overflow: "hidden",
+                border: "1px solid var(--border-accent)",
+                aspectRatio: "1",
+                boxShadow: "0 0 16px var(--accent-glow)",
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img 
+                src={
+                  activeVisualization === "original" 
+                    ? imageUrl 
+                    : activeVisualization === "ood" 
+                    ? result.visualizations?.ood_detector || imageUrl
+                    : result.visualizations?.tumor_classifier || imageUrl
+                } 
+                alt="MRI Analysis" 
+                style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+              />
+            </div>
+
+            {/* Visualization info */}
+            {hasVisualizations && activeVisualization !== "original" && (
+              <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid var(--border-subtle)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                  <Eye size={14} color="var(--accent-primary)" />
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--text-secondary)" }}>
+                    {activeVisualization === "ood" ? "MRI Validation Focus" : "Tumor Classification Focus"}
+                  </span>
+                </div>
+                <p style={{ fontFamily: "var(--font-body)", fontSize: "0.7rem", color: "var(--text-tertiary)", lineHeight: "1.4" }}>
+                  {activeVisualization === "ood" 
+                    ? "Red areas show where the model validates this is a brain MRI scan" 
+                    : "Red areas show where the model focuses for tumor classification"}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Predictions */}
